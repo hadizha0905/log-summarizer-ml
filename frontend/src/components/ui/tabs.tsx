@@ -1,5 +1,5 @@
-import React, { useState, ReactNode } from 'react';
-
+import React, { useState } from 'react';
+import type { ReactNode } from 'react';
 interface TabsProps {
   value?: string;
   onValueChange?: (value: string) => void;

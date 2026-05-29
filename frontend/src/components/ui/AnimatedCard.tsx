@@ -4,6 +4,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { motion, useAnimation, useInView } from 'framer-motion';
+import type { Variants } from 'framer-motion';
 
 interface AnimatedCardProps {
   children: React.ReactNode;
@@ -28,20 +29,24 @@ const AnimatedCard: React.FC<AnimatedCardProps> = ({
     }
   }, [controls, inView]);
 
-  const cardVariants = {
-    hidden: { opacity: 0, y: 50, scale: 0.95 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      scale: 1,
-      transition: {
-        type: 'spring',
-        damping: 12,
-        stiffness: 100,
-        delay,
-      },
+  const cardVariants: Variants = {
+  hidden: {
+    opacity: 0,
+    y: 50,
+    scale: 0.95,
+  },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: {
+      type: 'spring',
+      damping: 12,
+      stiffness: 100,
+      delay,
     },
-  };
+  },
+};
 
   return (
     <motion.div

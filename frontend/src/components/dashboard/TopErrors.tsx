@@ -23,5 +23,4 @@ const TopErrors: React.FC<TopErrorsProps> = ({ timeRange }) => {
     </Card>
   );
 };
-
 export default TopErrors;

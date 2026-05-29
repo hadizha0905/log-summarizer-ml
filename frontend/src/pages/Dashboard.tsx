@@ -5,41 +5,29 @@
 
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Activity,
   AlertTriangle,
   TrendingUp,
-  Clock,
   Server,
   Zap,
   Shield,
   Database,
   RefreshCw,
   Download,
-  Filter,
-  Calendar,
   ChevronRight,
   AlertCircle,
   CheckCircle,
-  XCircle,
-  BarChart3,
-  LineChart,
-  PieChart,
-  TrendingDown,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import {
   AreaChart,
   Area,
-  BarChart,
-  Bar,
-  LineChart as ReLineChart,
-  Line,
+  Line as ReLine,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -50,14 +38,14 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { format, subDays, startOfDay } from 'date-fns';
-import { ru } from 'date-fns/locale';
-import api from '@/services/api';
-import { useWebSocket } from '@/hooks/useWebSocket';
-import MetricsCard from '@/components/dashboard/MetricsCard';
-import ErrorTimeline from '@/components/dashboard/ErrorTimeline';
-import TopErrors from '@/components/dashboard/TopErrors';
-import AnomalyAlert from '@/components/dashboard/AnomalyAlert';
+import { format } from 'date-fns';
+// Временные импорты - замените на реальные пути к вашим сервисам
+// Исправлен путь импорта: используем абсолютный алиас '@/services/api'
+import api from 'src/services/api';
+import { useWebSocket } from 'src/hooks/useWebSocket';
+import MetricsCard from '../components/dashboard/MetricsCard';
+import ErrorTimeline from '../components/dashboard/ErrorTimeline';
+import AnomalyAlert from '../components/dashboard/AnomalyAlert';
 
 // Типы данных
 interface DashboardMetrics {
@@ -71,7 +59,7 @@ interface DashboardMetrics {
   systemHealth: number;
 }
 
-interface TimeSeriesData {
+interface TimeSeriesPoint {
   timestamp: string;
   errors: number;
   warnings: number;
@@ -79,10 +67,17 @@ interface TimeSeriesData {
   logs: number;
 }
 
-interface ErrorDistribution {
+interface ErrorDistributionItem {
   name: string;
   value: number;
   color: string;
+}
+
+interface TopError {
+  id: string;
+  message: string;
+  count: number;
+  severity: 'critical' | 'high' | 'medium' | 'low';
 }
 
 const Dashboard: React.FC = () => {
@@ -94,47 +89,98 @@ const Dashboard: React.FC = () => {
   const { lastMessage, isConnected } = useWebSocket('/ws/dashboard');
   
   // Запрос метрик
-  const { data: metrics, refetch: refetchMetrics, isLoading: metricsLoading } = useQuery({
+  const { 
+    data: metrics, 
+    refetch: refetchMetrics, 
+    isLoading: metricsLoading 
+  } = useQuery<DashboardMetrics>({
     queryKey: ['dashboardMetrics', timeRange],
     queryFn: () => api.getDashboardMetrics(timeRange),
     refetchInterval: autoRefresh ? 10000 : false,
   });
   
   // Запрос временного ряда
-  const { data: timeSeries } = useQuery({
+  const { 
+    data: timeSeries, 
+    refetch: refetchTimeSeries 
+  } = useQuery<TimeSeriesPoint[]>({
     queryKey: ['timeSeries', timeRange],
     queryFn: () => api.getTimeSeries(timeRange),
     refetchInterval: autoRefresh ? 10000 : false,
   });
   
   // Запрос распределения ошибок
-  const { data: errorDistribution } = useQuery({
-    queryKey: ['errorDistribution', timeRange],
-    queryFn: () => api.getErrorDistribution(timeRange),
-  });
+  const { 
+  data: errorDistribution, 
+  refetch: refetchErrorDistribution 
+} = useQuery<ErrorDistributionItem[]>({
+  queryKey: ['errorDistribution', timeRange],
+  queryFn: () => api.getErrorDistribution(), // Убрали timeRange
+});
   
   // Запрос топ ошибок
-  const { data: topErrors } = useQuery({
-    queryKey: ['topErrors', timeRange],
-    queryFn: () => api.getTopErrors(timeRange, 10),
-  });
+  const { 
+  data: topErrors, 
+  refetch: refetchTopErrors 
+} = useQuery<TopError[]>({
+  queryKey: ['topErrors', timeRange],
+  queryFn: () => api.getTopErrors(10), // Убрали timeRange, оставили только limit
+});
   
   // Обновление при WebSocket сообщении
   useEffect(() => {
     if (lastMessage && autoRefresh) {
       refetchMetrics();
-      setLastUpdate(new Date());
+      refetchTimeSeries();
+      refetchErrorDistribution();
+      refetchTopErrors();
+      // Avoid synchronous setState inside effect to prevent cascading renders
+      // schedule update asynchronously
+      const t = setTimeout(() => setLastUpdate(new Date()), 0);
+      return () => clearTimeout(t);
     }
-  }, [lastMessage, autoRefresh, refetchMetrics]);
+  }, [lastMessage, autoRefresh, refetchMetrics, refetchTimeSeries, refetchErrorDistribution, refetchTopErrors]);
   
   // Цвета для графиков
-  const COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#8b5cf6'];
+  const CHART_COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#8b5cf6'];
   
-  // Анимация для карточек
-  const cardVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0 },
+  // Форматирование метки времени для оси X
+  const formatXAxisTick = (timestamp: string) => {
+    return format(new Date(timestamp), 'HH:mm');
   };
+
+  // Форматирование подсказки для Tooltip
+  const formatTooltipLabel = (label: unknown): string => {
+    if (typeof label === 'string') {
+      return format(new Date(label), 'dd MMM HH:mm');
+    }
+    if (label instanceof Date) {
+      return format(label, 'dd MMM HH:mm');
+    }
+    return String(label || '');
+  };
+
+  // Получение текущих меток для аномалий
+  const getAnomalyTimestamps = () => {
+    const now = new Date();
+    return {
+      high: now,
+      medium: new Date(now.getTime() - 5 * 60000),
+      low: new Date(now.getTime() - 15 * 60000)
+    };
+  };
+  
+  // Показ загрузки
+  if (metricsLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <RefreshCw className="h-8 w-8 animate-spin text-blue-500 mx-auto mb-4" />
+          <p className="text-gray-400">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
@@ -207,18 +253,16 @@ const Dashboard: React.FC = () => {
       <div className="container mx-auto px-4 py-8">
         {/* Metrics Cards Grid */}
         <motion.div
-          initial="hidden"
-          animate="visible"
-          variants={{
-            visible: { transition: { staggerChildren: 0.1 } }
-          }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ staggerChildren: 0.1 }}
           className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4"
         >
           <MetricsCard
             title="Total Logs"
             value={metrics?.totalLogs?.toLocaleString() || '0'}
             icon={<Database className="h-5 w-5" />}
-            trend={+12.5}
+            trend={12.5}
             color="blue"
           />
           <MetricsCard
@@ -232,14 +276,14 @@ const Dashboard: React.FC = () => {
             title="Critical Issues"
             value={metrics?.criticalCount?.toLocaleString() || '0'}
             icon={<AlertCircle className="h-5 w-5" />}
-            trend={+5.2}
+            trend={5.2}
             color="orange"
           />
           <MetricsCard
             title="System Health"
             value={`${metrics?.systemHealth || 98}%`}
             icon={<Activity className="h-5 w-5" />}
-            trend={+1.5}
+            trend={1.5}
             color="green"
           />
           
@@ -266,7 +310,7 @@ const Dashboard: React.FC = () => {
             title="Recovery Rate"
             value={`${metrics?.recoveryRate || 94}%`}
             icon={<CheckCircle className="h-5 w-5" />}
-            trend={+2.1}
+            trend={2.1}
             color="teal"
           />
         </motion.div>
@@ -277,7 +321,7 @@ const Dashboard: React.FC = () => {
           <Card className="lg:col-span-2 bg-slate-900/50 backdrop-blur-sm border-slate-700">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <LineChart className="h-5 w-5 text-blue-400" />
+                <Activity className="h-5 w-5 text-blue-400" />
                 Error Timeline
               </CardTitle>
             </CardHeader>
@@ -298,7 +342,7 @@ const Dashboard: React.FC = () => {
                   <XAxis 
                     dataKey="timestamp" 
                     stroke="#94a3b8"
-                    tickFormatter={(tick) => format(new Date(tick), 'HH:mm')}
+                    tickFormatter={formatXAxisTick}
                   />
                   <YAxis stroke="#94a3b8" />
                   <Tooltip
@@ -307,7 +351,7 @@ const Dashboard: React.FC = () => {
                       border: '1px solid #334155',
                       borderRadius: '0.5rem',
                     }}
-                    labelFormatter={(label) => format(new Date(label), 'dd MMM HH:mm')}
+                    labelFormatter={formatTooltipLabel}
                   />
                   <Legend />
                   <Area
@@ -324,7 +368,7 @@ const Dashboard: React.FC = () => {
                     fill="url(#warningGradient)"
                     name="Warnings"
                   />
-                  <Line
+                  <ReLine
                     type="monotone"
                     dataKey="critical"
                     stroke="#dc2626"
@@ -341,7 +385,7 @@ const Dashboard: React.FC = () => {
           <Card className="bg-slate-900/50 backdrop-blur-sm border-slate-700">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <PieChart className="h-5 w-5 text-purple-400" />
+                <Server className="h-5 w-5 text-purple-400" />
                 Error Distribution
               </CardTitle>
             </CardHeader>
@@ -356,11 +400,11 @@ const Dashboard: React.FC = () => {
                     outerRadius={100}
                     paddingAngle={2}
                     dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    label={({ name, percent = 0 }) => `${name} ${(percent * 100).toFixed(0)}%`}
                     labelLine={false}
                   >
-                    {errorDistribution?.map((entry: ErrorDistribution, index: number) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    {errorDistribution?.map((entry: ErrorDistributionItem, index: number) => (
+                      <Cell key={`cell-${index}`} fill={entry.color || CHART_COLORS[index % CHART_COLORS.length]} />
                     ))}
                   </Pie>
                   <Tooltip
@@ -373,11 +417,11 @@ const Dashboard: React.FC = () => {
               </ResponsiveContainer>
               
               <div className="mt-4 flex flex-wrap justify-center gap-3">
-                {errorDistribution?.map((item: ErrorDistribution) => (
+                {errorDistribution?.map((item: ErrorDistributionItem) => (
                   <div key={item.name} className="flex items-center gap-2">
                     <div
                       className="h-3 w-3 rounded-full"
-                      style={{ backgroundColor: item.color }}
+                      style={{ backgroundColor: item.color || CHART_COLORS[0] }}
                     />
                     <span className="text-sm text-gray-300">{item.name}</span>
                     <span className="text-sm font-medium text-white">{item.value}</span>
@@ -400,7 +444,7 @@ const Dashboard: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {topErrors?.map((error: any, index: number) => (
+                {topErrors?.map((error: TopError, index: number) => (
                   <motion.div
                     key={error.id}
                     initial={{ opacity: 0, x: -20 }}
@@ -424,7 +468,9 @@ const Dashboard: React.FC = () => {
                       </div>
                       <ChevronRight className="h-5 w-5 text-gray-500 transition-transform group-hover:translate-x-1" />
                     </div>
-                    <Progress value={(error.count / topErrors[0].count) * 100} className="mt-3" />
+                    {topErrors[0] && (
+                      <Progress value={(error.count / topErrors[0].count) * 100} className="mt-3" />
+                    )}
                   </motion.div>
                 ))}
               </div>
@@ -444,17 +490,17 @@ const Dashboard: React.FC = () => {
                 <AnomalyAlert
                   level="high"
                   message="Unusual spike in database connection errors detected"
-                  timestamp={new Date()}
+                  timestamp={getAnomalyTimestamps().high}
                 />
                 <AnomalyAlert
                   level="medium"
                   message="Memory usage pattern deviates from normal baseline"
-                  timestamp={new Date(Date.now() - 5 * 60000)}
+                  timestamp={getAnomalyTimestamps().medium}
                 />
                 <AnomalyAlert
                   level="low"
                   message="Increased response latency in API gateway"
-                  timestamp={new Date(Date.now() - 15 * 60000)}
+                  timestamp={getAnomalyTimestamps().low}
                 />
               </div>
               
